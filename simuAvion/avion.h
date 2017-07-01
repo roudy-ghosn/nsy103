@@ -16,3 +16,8 @@ struct deplacement {
   int cap;
   int vitesse;
 };
+
+struct avion {
+    struct coordonnees position;
+    struct deplacement dep;
+};
