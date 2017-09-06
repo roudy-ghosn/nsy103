@@ -1,5 +1,4 @@
-#include <math.h>
-
+#include "saca.h"
 #include "avion.h"
 
 // caractéristiques du déplacement de l'avion
@@ -9,26 +8,53 @@ struct deplacement dep;
 struct coordonnees coord;
 
 // numéro de vol de l'avion : code sur 5 caractéres
+char buffer[1024];
 char numero_vol[6];
 
-/********************************
- ***  3 fonctions à implémenter
- ********************************/
-
+int sockfd = 0, intVal = 0, result;
+    
 int ouvrir_communication() {
-    // fonction à implémenter qui permet d'entrer en communication via TCP
-    // avec le gestionnaire de vols
+    int n = 0;
+    struct sockaddr_in serv_addr;
+
+    if((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        printf("Error: Could not create socket\n");
+        return -1;
+    } 
+
+    memset(&serv_addr, '0', sizeof(serv_addr)); 
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(PORTAVION); 
+ 
+    inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);    
+
+    if(connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
+       printf("Error: Connect Failed\n");
+       return -1;
+    } 
+
+    printf("Connected Successfully\n");
     return 1;
 }
 
 void fermer_communication() {
-    // fonction à implémenter qui permet de fermer la communication
-    // avec le gestionnaire de vols
+    if(sockfd != 0) {
+        close(sockfd);
+        printf("Socket Connection Closed Successfully");
+    }
 }
 
 void envoyer_caracteristiques() {
-    // fonction à implémenter qui envoie l'ensemble des caractéristiques
-    // courantes de l'avion au gestionnaire de vols
+    char sendBuffer[1024];
+    
+    sprintf(sendBuffer, "%s,%d,%d,%d,%d,%d", numero_vol, coord.x, coord.y, coord.altitude, dep.vitesse, dep.cap);
+ 
+    if ((send(sockfd, sendBuffer, sizeof(sendBuffer), 0)) < 0) {
+        printf("Sending Data to Saca Failed\n");
+    	exit(1);
+    }
 }
 
 /********************************
@@ -39,9 +65,11 @@ void envoyer_caracteristiques() {
 
 void initialiser_avion() {
     // initialisation al�atoire du compteur aléatoire
-    int seed;
+    /*int seed; 
     time(&seed);
-    srandom(seed);
+    srand(seed); */
+
+    srand (time(NULL));
 
     // intialisation des paramétres de l'avion
     coord.x = 1000 + random() % 1000;
@@ -141,7 +169,7 @@ void calcul_deplacement() {
     coord.x = coord.x + (int) dep_x;
     coord.y = coord.y + (int) dep_y;
 
-    afficher_donnees();
+    // afficher_donnees();
 }
 
 // fonction principale : gère l'exécution de l'avion au fil du temps
@@ -154,18 +182,87 @@ void se_deplacer() {
     }
 }
 
+void deplacer_avion(void *param){
+    se_deplacer();
+}
+
+void modifier_avion(void *param){
+   int afterEqual = 0, compteur = 0; 
+   while(1){
+        char *action = 0;
+        char *valeur = 0;
+        char commandBuffer[1024];
+        afterEqual = 0, compteur = 0; 
+        
+        action = (char*)malloc(sizeof(char)*20);
+        valeur = (char*)malloc(sizeof(char)*20);
+    
+	int r = read(sockfd, commandBuffer, sizeof(commandBuffer));
+
+	if (r < 0) {
+	    perror("ERROR reading from socket");
+	    exit(1);
+	}
+	
+        printf("Received Message From SACA %s\n", commandBuffer);
+
+	for(int i=0; i< strlen(commandBuffer); i++){
+	    if(commandBuffer[i] == '='){
+		compteur = 0;
+		afterEqual = 1;
+	    } else {
+		if (afterEqual == 1){
+		    valeur[compteur] = commandBuffer[i]; 
+		} else {	
+		    action[compteur] = commandBuffer[i];
+		}compteur++;
+	    }
+	}
+        
+        intVal = atoi(valeur);
+
+	printf("%s - %d\n", action, intVal);
+
+	if((result = strncmp(action, "vitesse", 7)) == 0){
+	    changer_vitesse(intVal);
+            sprintf(commandBuffer, "Vitesse Changes Successfully");
+	} else if((result = strncmp(action, "cap", 3)) == 0){
+	    changer_cap(intVal);
+            sprintf(commandBuffer, "Cap Changes Successfully");
+	} else if((result = strncmp(action, "altitude", 8)) == 0){
+	    changer_altitude(intVal);
+            sprintf(commandBuffer, "Altitude Changes Successfully");
+        } else {
+            sprintf(commandBuffer, "Action Not Found !"); 
+        }
+        
+        if ((send(sockfd, commandBuffer, sizeof(commandBuffer), 0)) < 0) {
+            printf("Sending Data to Saca Failed\n");
+    	    exit(1);
+        }
+    }	
+}
+
 int main() {
     // on initialise l'avion
     initialiser_avion();
 
     afficher_donnees();
+
     // on quitte si on arrive à pas contacter le gestionnaire de vols
     if (!ouvrir_communication()) {
-        printf("Impossible de contacter le gestionnaire de vols\n");
-        exit(1);
+       printf("Impossible de contacter le gestionnaire de vols\n");
+       exit(1);
     }
+    
+    // Utiliser pour deplacer l'avion
+    pthread_t deplacerThread;
+    pthread_create(&deplacerThread, NULL, deplacer_avion, NULL);
 
-    // on se déplace une fois toutes les initialisations faites
-    se_deplacer();
+    // Utiliser pour ecouter les changements demander venant du controlleur
+    pthread_t modiferThread;
+    pthread_create(&modiferThread, NULL, modifier_avion, NULL);
+ 
+    getchar();
+    return 1;
 }
-
